@@ -32,5 +32,7 @@ class TcpFrontend(host: String, port: Int) extends Actor {
       val handler = context.actorOf(Props[SimplisticHandler])
       val connection = sender()
       connection ! Register(handler)
+      println ("Client connected " + remote
+      )
   }
 }
