@@ -1,21 +1,18 @@
 package com.lenar
 
 import java.net.InetSocketAddress
-import java.nio.ByteOrder
 
-import akka.actor.{ActorLogging, Props, Actor}
+import akka.actor._
 import akka.io._
+import com.lenar.codecs.Codecs.FrameCodec
 
-/**
- * Created by lenar on 03.10.15.
- */
-
-object TcpFrontend
-{
-  def props(host: String, port: Int): Props = Props(classOf[TcpFrontend], host, port)
+object TcpFrontend {
+  def props(host: String, port: Int, createHandler: ActorRef => (Props, FrameCodec)): Props =
+    Props(classOf[TcpFrontend], host, port, createHandler)
 }
 
-class TcpFrontend(host: String, port: Int) extends Actor {
+class TcpFrontend(host: String, port: Int, createHandler: ActorRef => (Props, FrameCodec))
+  extends Actor with ActorLogging {
 
   import Tcp._
   import context.system
@@ -23,16 +20,18 @@ class TcpFrontend(host: String, port: Int) extends Actor {
   IO(Tcp) ! Bind(self, new InetSocketAddress(host, port))
 
   def receive = {
-    case b @ Bound(localAddress) =>
-    // do some logging or setup ...
+    case Bound(localAddress) =>
+      log.info(s"Server bound to $localAddress")
 
-    case CommandFailed(_: Bind) => context stop self
+    case CommandFailed(_: Bind) =>
+      log.error(s"Binding failed")
+      context stop self
 
-    case c @ Connected(remote, local) =>
-      val handler = context.actorOf(Props[SimplisticHandler])
+    case Connected(remote, local) =>
       val connection = sender()
+
+      val handler = context.actorOf(Props(classOf[SimplisticHandler], connection, createHandler))
       connection ! Register(handler)
-      println ("Client connected " + remote
-      )
+      log.info(s"Client connected $remote -> $local")
   }
 }
