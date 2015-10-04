@@ -1,47 +1,38 @@
 package com.lenar
 
-import java.nio.ByteOrder
-
-import akka.actor.Actor
-import akka.io.{IO, Tcp}
-import akka.io.Tcp.{Received, Write, PeerClosed}
+import akka.actor.{Props, Actor, ActorRef, ActorLogging}
+import akka.io.Tcp
 import akka.util.ByteString
+import codecs.Codecs.FrameCodec
 
+class SimplisticHandler(connection: ActorRef, createHandler: ActorRef => (Props, FrameCodec))
+  extends Actor with ActorLogging {
 
-/**
- * Created by lenar on 03.10.15.
- */
-class SimplisticHandler extends Actor {
   import Tcp._
 
-  def receive : Receive = process (ByteString.empty)
+  val (wrapperProps, codec) = createHandler(self)
+  val wrapper = context.actorOf(wrapperProps)
+  val (read, write) = codec
 
-  def process (byteString: ByteString) : Receive = {
-    case Received(data) => {
-      val(notParsedBytes, frames) = parse (byteString ++ data, List.empty)
-      context become process(notParsedBytes)
+  def receive: Receive = process(ByteString.empty)
 
-      frames foreach println
-    }
-    case PeerClosed => context stop self
-  }
+  def process(buffer: ByteString): Receive = {
 
-  def parse (byteString: ByteString, frames:List[String]) : (ByteString, List[String]) = {
-    if (byteString.length >= 4) {
-      val slice = byteString.slice(0, 4).asByteBuffer
+    case data: String =>
+      connection ! Write(write(data))
 
-      val length = slice.order(ByteOrder.LITTLE_ENDIAN).getInt
+    case Received(data) =>
+      log.info(s"Received: $data")
 
-      if (byteString.length >= 4 + length) {
-        val frame = byteString.slice(4, 4 + length).decodeString("UTF8")
-        val newFrames = frames :+ frame
-        val notParsedBytes = byteString.takeRight(byteString.length - (4 + length))
-        parse (notParsedBytes, newFrames)
-      } else {
-        (byteString, frames)
-      }
-    } else {
-      (byteString, frames)
-    }
+      val (restBuffer, frames) = read(buffer ++ data)
+      log.info(s"Parsed frames: $frames")
+
+      frames foreach { wrapper ! _ }
+
+      context become process(restBuffer)
+
+    case PeerClosed =>
+      log.info(s"Client disconnected: $sender")
+      context stop self
   }
 }
